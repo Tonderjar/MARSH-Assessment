@@ -1,0 +1,22 @@
+# PyInstaller build artifacts
+dist/
+build/
+*.spec
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Generated report output (produced by the app at runtime)
+output/
+
+# Environment
+.env
+.venv/
+env/
+venv/

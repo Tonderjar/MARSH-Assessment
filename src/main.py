@@ -1,5 +1,5 @@
 """
-Marsh McLennan — FP&A Report Generator
+Marsh — FP&A Report Generator
 Run: python src/main.py
 """
 import os
@@ -17,10 +17,13 @@ try:
 except Exception:
     pass
 
-sys.path.insert(0, os.path.dirname(__file__))
+# When frozen by PyInstaller, sys._MEIPASS holds the extraction dir.
+# In dev, fall back to the directory of this file.
+_base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _base)
 from engine import generate_report
 
-# ── Palette (Marsh McLennan brand) ───────────────────────────────────────────
+# ── Palette ──────────────────────────────────────────────────────────────────
 NAVY    = "#1C3F6E"
 BLUE    = "#2E75B6"
 LIGHT   = "#BDD7EE"
@@ -55,7 +58,7 @@ def _hover(widget, normal, hot):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Marsh McLennan  ·  FP&A Report Generator")
+        self.title("Marsh  ·  FP&A Report Generator")
         self.configure(bg=BG)
         self.resizable(False, False)
 
@@ -81,7 +84,7 @@ class App(tk.Tk):
         banner = tk.Frame(self, bg=NAVY, height=72)
         banner.pack(fill="x")
         banner.pack_propagate(False)
-        tk.Label(banner, text="MARSH McLENNAN", font=F_TITLE,
+        tk.Label(banner, text="MARSH", font=F_TITLE,
                  bg=NAVY, fg="white").place(x=28, y=10)
         tk.Label(banner, text="FP&A Report Generator", font=F_SUB,
                  bg=NAVY, fg=LIGHT).place(x=30, y=46)
