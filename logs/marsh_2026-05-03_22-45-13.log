@@ -1,0 +1,28 @@
+2026-05-03 22:45:13,663  INFO      marsh.app  Application started — log file: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\logs\marsh_2026-05-03_22-45-13.log
+2026-05-03 22:46:12,082  INFO      marsh.app  Run started — data=C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2024 fx=C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2023 Budget FX Rates.xlsx out=C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_1_FPA_Analysis.xlsx reports=['d1', 'd2'] dates=[None,None]
+2026-05-03 22:46:12,083  INFO      marsh.engine  Loading transactions from: C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2024
+2026-05-03 22:46:25,344  INFO      marsh.engine    314,754 rows loaded
+2026-05-03 22:46:25,344  INFO      marsh.engine  Loading FX rates from: C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2023 Budget FX Rates.xlsx
+2026-05-03 22:46:25,368  INFO      marsh.engine  Enriching data...
+2026-05-03 22:46:25,749  INFO      marsh.engine  Running analyses...
+2026-05-03 22:46:26,226  INFO      marsh.engine  Writing Excel report to: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_1_FPA_Analysis.xlsx
+2026-05-03 22:46:47,440  INFO      marsh.engine  Injecting pivot table...
+2026-05-03 22:46:53,837  INFO      marsh.engine  Pivot table injected: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_1_FPA_Analysis.xlsx
+2026-05-03 22:46:53,991  INFO      marsh.engine  Done: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_1_FPA_Analysis.xlsx
+2026-05-03 22:46:54,012  INFO      marsh.engine  [LATAM] Loading transactions from: C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2024
+2026-05-03 22:47:07,946  INFO      marsh.engine    314,754 rows loaded
+2026-05-03 22:47:07,946  INFO      marsh.engine  [LATAM] Loading FX rates from: C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2023 Budget FX Rates.xlsx
+2026-05-03 22:47:07,976  INFO      marsh.engine  [LATAM] Enriching data...
+2026-05-03 22:47:08,435  INFO      marsh.engine  [LATAM] Filtering to Latin America...
+2026-05-03 22:47:08,487  INFO      marsh.engine    54,976 LATAM rows across 23 countries
+2026-05-03 22:47:08,487  INFO      marsh.engine  [LATAM] Identifying restricted-country Q4 exposure...
+2026-05-03 22:47:08,508  INFO      marsh.engine    1355 clients flagged in restricted jurisdictions
+2026-05-03 22:47:08,508  INFO      marsh.engine  [LATAM] Writing report to: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_2_LatinAmerica.xlsx
+2026-05-03 22:47:16,285  INFO      marsh.engine  Done: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_2_LatinAmerica.xlsx
+2026-05-03 22:47:16,319  INFO      marsh.app  Run complete — 2 reports: ['C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_1_FPA_Analysis.xlsx', 'C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_2_LatinAmerica.xlsx']
+2026-05-03 22:47:28,984  INFO      marsh.app  Opening Outlook draft for: diegolezama22@gmail.com
+2026-05-03 22:47:30,617  ERROR     marsh.app  Outlook error
+Traceback (most recent call last):
+  File "main.py", line 606, in _send_outlook
+  File "win32com\client\dynamic.py", line 631, in __getattr__
+AttributeError: Outlook.Application.CreateItem

@@ -35,6 +35,8 @@ pyinstaller ^
     --hidden-import openpyxl.chart.bar_chart ^
     --hidden-import openpyxl.chart.line_chart ^
     --collect-all openpyxl ^
+    --hidden-import win32com.client ^
+    --hidden-import pythoncom ^
     src\main.py
 
 if errorlevel 1 (

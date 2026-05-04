@@ -1,0 +1,19 @@
+2026-05-03 23:05:23,954  INFO      marsh.app  Application started — log file: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\logs\marsh_2026-05-03_23-05-23.log
+2026-05-03 23:06:07,746  INFO      marsh.app  Run started — data=C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2024 fx=C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2023 Budget FX Rates.xlsx out=C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_1_FPA_Analysis.xlsx reports=['d2'] dates=[None,None]
+2026-05-03 23:06:07,747  INFO      marsh.engine  [LATAM] Loading transactions from: C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2024
+2026-05-03 23:06:20,143  INFO      marsh.engine    314,754 rows loaded
+2026-05-03 23:06:20,143  INFO      marsh.engine  [LATAM] Loading FX rates from: C:/Users/diego/Desktop/MARSH/MARSH-Assessment/data/2023 Budget FX Rates.xlsx
+2026-05-03 23:06:20,169  INFO      marsh.engine  [LATAM] Enriching data...
+2026-05-03 23:06:20,589  INFO      marsh.engine  [LATAM] Filtering to Latin America...
+2026-05-03 23:06:20,640  INFO      marsh.engine    54,976 LATAM rows across 23 countries
+2026-05-03 23:06:20,640  INFO      marsh.engine  [LATAM] Identifying restricted-country Q4 exposure...
+2026-05-03 23:06:20,660  INFO      marsh.engine    1355 clients flagged in restricted jurisdictions
+2026-05-03 23:06:20,660  INFO      marsh.engine  [LATAM] Writing report to: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_2_LatinAmerica.xlsx
+2026-05-03 23:06:27,552  INFO      marsh.engine  Done: C:\Users\diego\Desktop\MARSH\MARSH-Assessment\output\Deliverable_2_LatinAmerica.xlsx
+2026-05-03 23:06:27,576  INFO      marsh.app  Run complete — 1 reports: ['C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_2_LatinAmerica.xlsx']
+2026-05-03 23:06:47,439  WARNING   marsh.app  Clipboard copy failed: Command '['powershell', '-Command', 'Set-Clipboard -Path @("C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_1_FPA_Analysis.xlsx", "C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_2_LatinAmerica.xlsx")']' timed out after 5 seconds
+2026-05-03 23:06:47,439  INFO      marsh.app  Opening compose window for: diegolezama22@gmail.com
+2026-05-03 23:07:29,872  WARNING   marsh.app  Clipboard copy failed: Command '['powershell', '-Command', 'Set-Clipboard -Path @("C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_1_FPA_Analysis.xlsx", "C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_2_LatinAmerica.xlsx")']' timed out after 5 seconds
+2026-05-03 23:07:29,872  INFO      marsh.app  Opening compose window for: diegolezama22@gmail.com
+2026-05-03 23:08:31,047  WARNING   marsh.app  Clipboard copy failed: Command '['powershell', '-Command', 'Set-Clipboard -Path @("C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_1_FPA_Analysis.xlsx", "C:\\Users\\diego\\Desktop\\MARSH\\MARSH-Assessment\\output\\Deliverable_2_LatinAmerica.xlsx")']' timed out after 5 seconds
+2026-05-03 23:08:31,048  INFO      marsh.app  Opening compose window for: diegolezama22@gmail.com

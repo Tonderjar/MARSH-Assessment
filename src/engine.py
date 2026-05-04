@@ -1,13 +1,45 @@
+"""
+engine.py — Core analysis pipeline for the Marsh FP&A Report Generator.
+
+Responsibilities:
+  - Load and parse raw DataTrans_* files (CSV/Excel) from a folder tree.
+  - Load FX rates and convert all transaction amounts to USD.
+  - Run aggregations: by client, currency, month, market section, and geography.
+  - Write the fully styled Deliverable 1 Excel workbook (6 sheets + embedded charts).
+  - Inject a live PivotTable via win32com/Excel COM automation (requires pywin32).
+  - Write the Deliverable 2 LATAM Excel workbook (5 sheets, restricted-country flag).
+
+Public entry points:
+  generate_report()       → Deliverable 1 (full analysis)
+  generate_latam_report() → Deliverable 2 (LATAM-only, with Q4 risk sheet)
+"""
+
 import os
 import glob
+import logging
 from datetime import datetime
 import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.chart import BarChart, LineChart, Reference
 
+logger = logging.getLogger("marsh.engine")
 
 REQUIRED_COLS = {"Client", "Country", "Currency", "Transaction"}
+
+# Countries recognised as Latin America for the D2 LATAM filter.
+# Upper-cased so comparisons can be done after .str.upper() without a case-sensitive mismatch.
+LATAM_COUNTRIES = {
+    "ARGENTINA", "BOLIVIA", "BRAZIL", "CHILE", "COLOMBIA", "COSTA RICA",
+    "CUBA", "DOMINICAN REPUBLIC", "ECUADOR", "EL SALVADOR", "GUATEMALA",
+    "HAITI", "HONDURAS", "JAMAICA", "MEXICO", "NICARAGUA", "PANAMA",
+    "PARAGUAY", "PERU", "PUERTO RICO", "TRINIDAD AND TOBAGO", "URUGUAY",
+    "VENEZUELA", "BELIZE", "GUYANA", "SURINAME", "FRENCH GUIANA",
+}
+
+# Countries flagged as restricted jurisdictions for the Q4 exposure sheet.
+# Includes known spelling variants found in source data (e.g. RUSIA alongside RUSSIA).
+RESTRICTED_COUNTRIES = {"RUSSIA", "RUSIA", "CUBA", "CHINA", "VENEZUELA"}
 
 ############################################################################################
 #                           File reading and parsing logic                                 #
@@ -22,6 +54,16 @@ def _find_header_row(raw: pd.DataFrame) -> int | None:
 
 
 def _read_file(filepath: str) -> pd.DataFrame | None:
+    """
+    Read a single DataTrans file (CSV or Excel), locate the header row dynamically,
+    and return a DataFrame with exactly the four required columns.
+
+    The header scan is necessary because source files often include title rows or
+    metadata above the actual column names, so row 0 is not always the header.
+
+    Returns None (and logs a warning) if the file cannot be parsed or is missing
+    the expected columns — allowing the loader to skip bad files silently.
+    """
     ext = os.path.splitext(filepath)[1].lower()
     try:
         if ext == ".csv":
@@ -29,12 +71,12 @@ def _read_file(filepath: str) -> pd.DataFrame | None:
         else:
             raw = pd.read_excel(filepath, header=None, dtype=str)
     except Exception as e:
-        print(f"Skipping {filepath}: {e}")
+        logger.warning("Skipping %s: %s", filepath, e)
         return None
 
     header_row = _find_header_row(raw)
     if header_row is None:
-        print(f"Skipping {filepath}: required columns not found")
+        logger.warning("Skipping %s: required columns not found", filepath)
         return None
 
     raw.columns = [str(v).strip() for v in raw.iloc[header_row]]
@@ -237,7 +279,13 @@ def _border():
 
 
 def _write_table(ws, df, sr=1, sc=1, hdr=_XL_NAVY):
-    """Fully styled per-cell write — use only for small tables (< ~500 rows)."""
+    """
+    Fully styled per-cell write — use only for small tables (< ~500 rows).
+
+    Applies alternating row fills, number formats, and alignment to every cell.
+    For large tables use _write_fast instead, which skips per-cell styling on
+    data rows to avoid the significant overhead of Cell object creation in openpyxl.
+    """
     b = _border()
     ws.row_dimensions[sr].height = 22
     for c, col in enumerate(df.columns, start=sc):
@@ -261,7 +309,13 @@ def _write_table(ws, df, sr=1, sc=1, hdr=_XL_NAVY):
 
 
 def _write_fast(ws, df, col_widths=None):
-    """Header-only styling + ws.append() for large tables. col_widths: list of ints."""
+    """
+    Header-only styling + ws.append() for large tables.
+
+    Only the header row receives full styling; data rows are written with the
+    bare ws.append() path, which is significantly faster than per-cell writes
+    for tables with thousands of rows. col_widths is an optional list of ints.
+    """
     b = _border()
     ws.row_dimensions[1].height = 22
     for c, col in enumerate(df.columns, start=1):
@@ -276,14 +330,41 @@ def _write_fast(ws, df, col_widths=None):
 
 
 def _aw(ws, lo=8, hi=45):
-    for col in ws.columns:
-        w = max((len(str(c.value or "")) for c in col), default=lo)
-        ws.column_dimensions[col[0].column_letter].width = min(max(w + 2, lo), hi)
+    """
+    Auto-fit column widths on a worksheet, clamped to [lo, hi] characters.
+
+    Skips MergedCell instances because openpyxl represents the non-anchor cells
+    of a merged range as MergedCell objects (not regular Cell objects), which do
+    not have a .value attribute and would raise AttributeError if accessed.
+    """
+    from openpyxl.utils import get_column_letter
+    from openpyxl.cell.cell import MergedCell
+    for i, col in enumerate(ws.columns, start=1):
+        w = max(
+            (len(str(c.value or "")) for c in col if not isinstance(c, MergedCell)),
+            default=lo,
+        )
+        ws.column_dimensions[get_column_letter(i)].width = min(max(w + 2, lo), hi)
 
 
 def _build_excel(total_rev, total_txn, n_clients, n_countries,
                  cc, client_summary, monthly, section, geo,
                  output_path, year_label="FY 2024"):
+    """
+    Construct the fully-styled Deliverable 1 workbook and save it to output_path.
+
+    Sheet layout:
+      1. Executive Summary    — KPI tiles and sheet index
+      2. Txns by Client & Currency — raw counts (fast path, large)
+      3. Client Revenue (USD) — ranked clients with bar chart (fast path, large)
+      4. Monthly Revenue      — revenue by month with line chart
+      5. Market Section Analysis — by first client-code character with bar chart
+      6. Geographic Analysis  — by country with bar chart
+
+    _write_fast is used for sheets 2 and 3 because they can contain thousands of
+    rows; _write_table is used for sheets 4–6 where row counts are small and the
+    per-cell styling (alternating fills, number formats) is worth the overhead.
+    """
     wb = openpyxl.Workbook()
 
     # ── Sheet 1: Executive Summary ────────────────────────────────────────────
@@ -452,6 +533,93 @@ def _build_excel(total_rev, total_txn, n_clients, n_countries,
 
 
 ############################################################################################
+#                           Pivot table injection (win32com)                               #
+############################################################################################
+
+def _add_pivot_tables(output_path: str) -> None:
+    """
+    Open the saved workbook in Excel via win32com and inject a real PivotTable on a
+    new 'Pivot - By Section' sheet.  Silent no-op if Excel / pywin32 is not available.
+
+    Win32com constant values used here (Excel VBA equivalents):
+      SourceType=1   → xlDatabase  (range-based pivot cache, as opposed to external data)
+      Orientation=1  → xlRowField  (field appears as row labels in the pivot)
+      -4157          → xlSum       (aggregate function; negative because it's an XlConsolidationFunction enum)
+      Font.Color     → BGR integer format (Excel stores colours as 0xBBGGRR, not RGB)
+    """
+    try:
+        import win32com.client as _w32
+    except ImportError:
+        logger.warning("pywin32 not installed — pivot table injection skipped")
+        return
+
+    abs_path = os.path.abspath(output_path)
+    xl = _w32.Dispatch("Excel.Application")
+    xl.Visible       = False   # run headless — no Excel window appears
+    xl.DisplayAlerts = False   # suppress "do you want to save?" prompts
+    wb = None
+    try:
+        wb = xl.Workbooks.Open(abs_path)
+
+        # Remove existing pivot sheet so re-runs are idempotent
+        for i in range(wb.Worksheets.Count, 0, -1):
+            if wb.Worksheets(i).Name == "Pivot - By Section":
+                wb.Worksheets(i).Delete()
+                break
+
+        ws_src   = wb.Worksheets("Client Revenue (USD)")
+        last_row = ws_src.UsedRange.Rows.Count
+        # Columns: Rank | Client | Total Revenue (USD) | Transaction Count | Market Section
+        src_rng  = ws_src.Range(ws_src.Cells(1, 1), ws_src.Cells(last_row, 5))
+
+        ws_piv      = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
+        ws_piv.Name = "Pivot - By Section"
+
+        # PivotCache → PivotTable
+        pc = wb.PivotCaches().Create(SourceType=1, SourceData=src_rng)  # 1 = xlDatabase
+        pt = pc.CreatePivotTable(
+            TableDestination=ws_piv.Range("A3"),
+            TableName="PivotBySection",
+        )
+
+        # Row field: Market Section
+        pf = pt.PivotFields("Market Section")
+        pf.Orientation = 1   # xlRowField
+        pf.Position    = 1
+
+        # Data fields: revenue and transaction count, both summed
+        pt.AddDataField(pt.PivotFields("Total Revenue (USD)"), "Revenue (USD)",  -4157)  # xlSum
+        pt.AddDataField(pt.PivotFields("Transaction Count"),   "Transactions",   -4157)
+
+        pt.TableStyle2 = "PivotStyleMedium9"
+
+        # Title cell above the pivot
+        title = ws_piv.Range("A1")
+        title.Value          = "Revenue & Transactions by Market Section"
+        title.Font.Bold      = True
+        title.Font.Size      = 13
+        title.Font.Color     = 0x6E3F1C  # navy #1C3F6E expressed as BGR (Excel's byte order)
+
+        ws_piv.Columns("A:D").AutoFit()
+
+        wb.Save()
+        logger.info("Pivot table injected: %s", abs_path)
+
+    except Exception as exc:
+        logger.warning("Pivot table injection failed: %s", exc)
+    finally:
+        if wb is not None:
+            try:
+                wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+        try:
+            xl.Quit()
+        except Exception:
+            pass
+
+
+############################################################################################
 #                           Main entry point                                               #
 ############################################################################################
 
@@ -460,6 +628,8 @@ def generate_report(
     fx_path: str | None = None,
     output_path: str | None = None,
     progress_cb=None,
+    date_from=None,
+    date_to=None,
 ) -> str:
     """
     Full pipeline: load → enrich → analyse → export Excel.
@@ -472,10 +642,13 @@ def generate_report(
     output_path : destination .xlsx path; defaults to
                   <data_root>/Deliverable_1_FPA_Analysis.xlsx.
     progress_cb : optional callable(message: str) for GUI progress updates.
+    date_from   : optional datetime — rows before this date are excluded.
+    date_to     : optional datetime — rows after this date are excluded.
 
     Returns the absolute path to the saved workbook.
     """
     def _log(msg):
+        logger.info(msg)
         if progress_cb:
             progress_cb(msg)
         else:
@@ -502,13 +675,23 @@ def generate_report(
         raise ValueError(f"No transaction files found under '{data_root}'.")
     _log(f"  {len(df_raw):,} rows loaded")
 
+    # Apply optional date filter before any enrichment or aggregation
+    if date_from is not None:
+        df_raw = df_raw[df_raw["log_date"] >= pd.Timestamp(date_from)]
+    if date_to is not None:
+        df_raw = df_raw[df_raw["log_date"] <= pd.Timestamp(date_to)]
+    if date_from is not None or date_to is not None:
+        _log(f"  After date filter: {len(df_raw):,} rows")
+        if df_raw.empty:
+            raise ValueError("No rows remain after applying the date filter.")
+
     _log(f"Loading FX rates from: {fx_path}")
     fx_rates = load_fx_rates(fx_path)
 
     _log("Enriching data...")
     df = _enrich(df_raw, fx_rates)
 
-    # Derive year label from the actual data date range
+    # Build a descriptive year label from the actual data rather than a hard-coded value
     years = df["log_date"].dt.year.dropna().unique()
     if len(years) == 1:
         year_label = f"FY {int(years[0])}"
@@ -536,6 +719,259 @@ def generate_report(
         output_path, year_label,
     )
 
+    _log("Injecting pivot table...")
+    _add_pivot_tables(output_path)
+
     out = os.path.abspath(output_path)
-    _log(f"Done → {out}")
+    _log(f"Done: {out}")
+    return out
+
+
+############################################################################################
+#                           LATAM report                                                   #
+############################################################################################
+
+_XL_ALERT = "B71C1C"   # red header for the restricted-country risk sheet
+_XL_LRED  = "FFEBEE"   # light red alternating row fill for the same sheet
+
+
+def _build_latam_excel(df_latam: pd.DataFrame, df_restricted: pd.DataFrame,
+                       output_path: str, year_label: str = "FY 2024") -> None:
+    """
+    Build the Deliverable 2 workbook and save it to output_path.
+
+    Sheet layout:
+      1. Executive Summary          — KPI tiles for the LATAM subset
+      2. LATAM Transactions         — full row-level detail (fast path)
+      3. Client Revenue (USD)       — LATAM clients ranked by revenue (fast path)
+      4. Geographic Analysis        — revenue by LATAM country with bar chart
+      5. Restricted Clients (Q4)    — clients transacting in restricted jurisdictions
+                                      during Q4; header and rows styled in red to
+                                      signal compliance risk visually
+
+    df_latam     : enriched DataFrame filtered to LATAM_COUNTRIES.
+    df_restricted: enriched DataFrame filtered to RESTRICTED_COUNTRIES within Q4.
+    """
+    wb = openpyxl.Workbook()
+
+    latam_rev      = df_latam["Transaction_USD"].sum()
+    latam_txn      = len(df_latam)
+    latam_clients  = df_latam["Client"].nunique()
+    latam_n_countries = df_latam["Country"].nunique()
+
+    # ── Sheet 1: Executive Summary ────────────────────────────────────────────
+    ws_sum = wb.active
+    ws_sum.title = "Executive Summary"
+    ws_sum.sheet_view.showGridLines = False
+
+    for rh, val, sz, bold in [
+        (1, "",  8,  False),
+        (2, f"MARSH  |  Latin America Report — {year_label}", 20, True),
+        (3, "Regional FP&A Analysis — LATAM Transactions", 12, False),
+        (4, "", 8, False),
+    ]:
+        ws_sum.merge_cells(f"A{rh}:H{rh}")
+        cell = ws_sum.cell(row=rh, column=1, value=val)
+        cell.fill = _fill(_XL_NAVY)
+        cell.font = Font(name="Calibri", size=sz, bold=bold, color=_XL_WHITE)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws_sum.row_dimensions[rh].height = 8 if not val else (48 if sz > 15 else 22)
+
+    ws_sum.row_dimensions[6].height = 50
+    ws_sum.row_dimensions[7].height = 20
+    ws_sum.row_dimensions[8].height = 8
+
+    for value, label, c1, c2 in [
+        (f"${latam_rev / 1e6:.1f} M", "Total Revenue (USD)", "A", "B"),
+        (f"{latam_txn:,}",             "Total Transactions",  "C", "D"),
+        (f"{latam_clients:,}",         "Unique Clients",      "E", "F"),
+        (f"{latam_n_countries}",       "Countries",           "G", "H"),
+    ]:
+        ws_sum.merge_cells(f"{c1}6:{c2}6")
+        ws_sum.merge_cells(f"{c1}7:{c2}7")
+        v = ws_sum[f"{c1}6"]
+        v.value = value; v.fill = _fill(_XL_BLUE)
+        v.font = Font(name="Calibri", size=22, bold=True, color=_XL_WHITE)
+        v.alignment = Alignment(horizontal="center", vertical="center")
+        l = ws_sum[f"{c1}7"]
+        l.value = label; l.fill = _fill(_XL_LIGHT)
+        l.font = Font(name="Calibri", size=10, bold=True, color=_XL_NAVY)
+        l.alignment = Alignment(horizontal="center", vertical="center")
+
+    # ── Sheet 2: LATAM Transactions (raw) ────────────────────────────────────
+    ws_txn = wb.create_sheet("LATAM Transactions")
+    ws_txn.sheet_view.showGridLines = False
+    ws_txn.freeze_panes = "A2"
+    txn_e = df_latam[["Client", "Country", "Currency",
+                       "Transaction", "Transaction_USD", "log_date"]].copy()
+    txn_e["Transaction"]     = txn_e["Transaction"].round(2)
+    txn_e["Transaction_USD"] = txn_e["Transaction_USD"].round(2)
+    txn_e["log_date"]        = txn_e["log_date"].dt.strftime("%Y-%m-%d")
+    txn_e.columns = ["Client", "Country", "Currency",
+                     "Amount (Local)", "Amount (USD)", "Date"]
+    _write_fast(ws_txn, txn_e, col_widths=[14, 22, 10, 18, 18, 14])
+
+    # ── Sheet 3: Client Revenue (LATAM) ──────────────────────────────────────
+    ws_cli = wb.create_sheet("Client Revenue (USD)")
+    ws_cli.sheet_view.showGridLines = False
+    ws_cli.freeze_panes = "A2"
+    cli_e = (
+        df_latam.groupby("Client")["Transaction_USD"]
+        .sum().reset_index(name="Total_USD")
+        .sort_values("Total_USD", ascending=False).reset_index(drop=True)
+    )
+    cli_e.insert(0, "Rank", range(1, len(cli_e) + 1))
+    cli_e.columns = ["Rank", "Client", "Total Revenue (USD)"]
+    _write_fast(ws_cli, cli_e, col_widths=[8, 14, 22])
+
+    ch = BarChart()
+    ch.type = "bar"; ch.title = "Top 20 LATAM Clients by Revenue (USD)"; ch.style = 10
+    ch.y_axis.title = "Client"; ch.x_axis.title = "Revenue (USD)"
+    ch.width = 22; ch.height = 16
+    tn = min(21, len(cli_e) + 1)
+    ch.add_data(Reference(ws_cli, min_col=3, min_row=1, max_row=tn), titles_from_data=True)
+    ch.set_categories(Reference(ws_cli, min_col=2, min_row=2, max_row=tn))
+    ws_cli.add_chart(ch, "E2")
+
+    # ── Sheet 4: Geographic Analysis (LATAM) ─────────────────────────────────
+    ws_geo = wb.create_sheet("Geographic Analysis")
+    ws_geo.sheet_view.showGridLines = False
+    ws_geo.freeze_panes = "A2"
+    geo_e = (
+        df_latam.groupby("Country")
+        .agg(Transaction_Count=("Transaction", "count"),
+             Total_USD=("Transaction_USD", "sum"))
+        .reset_index()
+        .sort_values("Total_USD", ascending=False).reset_index(drop=True)
+    )
+    geo_e.insert(0, "Rank", range(1, len(geo_e) + 1))
+    geo_e.columns = ["Rank", "Country", "Transaction Count", "Total Revenue (USD)"]
+    _write_table(ws_geo, geo_e)
+    for r in range(2, len(geo_e) + 2):
+        ws_geo.cell(r, 3).number_format = "#,##0"
+        ws_geo.cell(r, 4).number_format = '"$"#,##0.00'
+    _aw(ws_geo)
+
+    # ── Sheet 5: Restricted Clients (Q4) ─────────────────────────────────────
+    ws_risk = wb.create_sheet("Restricted Clients (Q4)")
+    ws_risk.sheet_view.showGridLines = False
+    ws_risk.freeze_panes = "A2"
+
+    if df_restricted.empty:
+        ws_risk.cell(row=1, column=1).value = "No clients flagged for restricted jurisdictions in this period."
+        ws_risk.column_dimensions["A"].width = 70
+    else:
+        risk_e = df_restricted[["Client", "Country", "Currency",
+                                 "Transaction", "Transaction_USD", "log_date"]].copy()
+        risk_e["Transaction"]     = risk_e["Transaction"].round(2)
+        risk_e["Transaction_USD"] = risk_e["Transaction_USD"].round(2)
+        risk_e["log_date"]        = risk_e["log_date"].dt.strftime("%Y-%m-%d")
+        risk_e.columns = ["Client", "Country", "Currency",
+                           "Amount (Local)", "Amount (USD)", "Date"]
+        b = _border()
+        ws_risk.row_dimensions[1].height = 22
+        # Red header signals compliance risk — intentionally distinct from the standard navy
+        for c, col in enumerate(risk_e.columns, start=1):
+            cell = ws_risk.cell(row=1, column=c, value=col)
+            cell.fill = _fill(_XL_ALERT); cell.font = _font(_XL_WHITE, True, 10)
+            cell.border = b
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        for r, row in enumerate(risk_e.itertuples(index=False), start=2):
+            rf = _fill(_XL_LRED) if r % 2 == 0 else _fill(_XL_WHITE)
+            for c, val in enumerate(row, start=1):
+                cell = ws_risk.cell(row=r, column=c, value=val)
+                cell.fill = rf; cell.border = b; cell.font = _font()
+                if isinstance(val, float):
+                    cell.number_format = "#,##0.00"
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                else:
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+        _aw(ws_risk)
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    wb.save(output_path)
+
+
+def generate_latam_report(
+    data_root: str,
+    fx_path: str | None = None,
+    output_path: str | None = None,
+    progress_cb=None,
+    date_from=None,
+    date_to=None,
+) -> str:
+    """
+    LATAM pipeline: load → filter to Latin America → export Excel with
+    transaction detail, client totals, geographic analysis, and a
+    Q4 restricted-country client list.
+
+    Q4 is calculated from the data's own year (max year present in log_date),
+    not the current calendar year, so the filter remains correct when analysing
+    historical data sets.
+
+    Returns the absolute path to the saved workbook.
+    """
+    def _log(msg):
+        logger.info(msg)
+        if progress_cb:
+            progress_cb(msg)
+        else:
+            print(msg)
+
+    if fx_path is None:
+        hits = (glob.glob(os.path.join(data_root, "**", "*FX*Rates*.xlsx"), recursive=True)
+                or glob.glob(os.path.join(data_root, "**", "*FX*.xlsx"), recursive=True))
+        if not hits:
+            raise FileNotFoundError(
+                f"No FX rates file found under '{data_root}'. Pass fx_path explicitly.")
+        fx_path = hits[0]
+
+    if output_path is None:
+        output_path = os.path.join(data_root, "Deliverable_2_LatinAmerica.xlsx")
+
+    _log(f"[LATAM] Loading transactions from: {data_root}")
+    df_raw = load_all_transactions(data_root)
+    if df_raw.empty:
+        raise ValueError(f"No transaction files found under '{data_root}'.")
+    _log(f"  {len(df_raw):,} rows loaded")
+
+    if date_from is not None:
+        df_raw = df_raw[df_raw["log_date"] >= pd.Timestamp(date_from)]
+    if date_to is not None:
+        df_raw = df_raw[df_raw["log_date"] <= pd.Timestamp(date_to)]
+    if date_from is not None or date_to is not None:
+        _log(f"  After date filter: {len(df_raw):,} rows")
+
+    _log(f"[LATAM] Loading FX rates from: {fx_path}")
+    fx_rates = load_fx_rates(fx_path)
+
+    _log("[LATAM] Enriching data...")
+    df = _enrich(df_raw, fx_rates)
+    df["Country_upper"] = df["Country"].str.strip().str.upper()
+
+    years = df["log_date"].dt.year.dropna().unique()
+    data_year  = int(years.max()) if len(years) > 0 else datetime.now().year
+    year_label = (f"FY {int(years[0])}" if len(years) == 1
+                  else f"FY {int(years.min())}-{int(years.max())}"
+                  if len(years) > 1 else "FY Report")
+
+    _log("[LATAM] Filtering to Latin America...")
+    df_latam = df[df["Country_upper"].isin(LATAM_COUNTRIES)].copy()
+    if df_latam.empty:
+        raise ValueError("No LATAM transactions found in the data.")
+    _log(f"  {len(df_latam):,} LATAM rows across {df_latam['Country'].nunique()} countries")
+
+    # Q4 restricted exposure: look at ALL countries (not just LATAM) for the full risk picture
+    _log("[LATAM] Identifying restricted-country Q4 exposure...")
+    q4_start      = pd.Timestamp(f"{data_year}-10-01")
+    q4_end        = pd.Timestamp(f"{data_year}-12-31")
+    df_q4         = df[(df["log_date"] >= q4_start) & (df["log_date"] <= q4_end)]
+    df_restricted = df_q4[df_q4["Country_upper"].isin(RESTRICTED_COUNTRIES)].copy()
+    _log(f"  {df_restricted['Client'].nunique()} clients flagged in restricted jurisdictions")
+
+    _log(f"[LATAM] Writing report to: {output_path}")
+    _build_latam_excel(df_latam, df_restricted, output_path, year_label)
+
+    out = os.path.abspath(output_path)
+    _log(f"Done: {out}")
     return out
