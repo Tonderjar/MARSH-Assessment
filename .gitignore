@@ -1,5 +1,4 @@
 # PyInstaller build artifacts
-dist/
 build/
 *.spec
 
@@ -11,9 +10,6 @@ __pycache__/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
-
-# Generated report output (produced by the app at runtime)
-output/
 
 # Environment
 .env
